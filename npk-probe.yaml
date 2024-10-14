@@ -173,6 +173,7 @@ touchscreen:
     mirror_x: false
     mirror_y: false
     swap_xy: false
+    
 # +--------------------------------> 
 # | 400,400                  400,4000
 # |
@@ -493,9 +494,6 @@ display:
         id(sensor_data_updated) = false;
       }
 
-
-
-
       // Define button areas
       constexpr int rightButtonXMin = 10; 
       constexpr int rightButtonXMax = 420; // Right edge of the display
@@ -547,11 +545,6 @@ display:
         it.print(260, 215, id(icon_font_45), button_text_color, TextAlign::TOP_CENTER, "NEXT"); 
 
       }
-
-
-      
-
-
       // ///////////////////////////////////////////////////////////////////////
 
 
@@ -1449,4 +1442,4 @@ globals:
     type: float
     initial_value: '200.0'   # Potassium (mg/L)
 
-```
+
