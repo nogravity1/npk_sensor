@@ -1,0 +1,1452 @@
+substitutions:
+########################### GENERAL CONFIG ####################
+# NPKPHCTH-S probe
+# https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/arduino/original/4X/5/c/0/5c01c131ef10541bfc68f9553c669807e9e54451.pdf
+#
+###########################
+  node_name: npk-probe 
+  device_name: npk-probe
+  wifi_ip: !secret npk-probe
+  board_type: esp32dev
+
+  wifi_ssid: !secret wifi_ssid 
+  wifi_password: !secret wifi_password 
+  web_server_id: !secret web_server_id
+  web_server_pass: !secret web_server_pass
+  # GND
+  # VCC = 3.3V
+  disp_clk: GPIO18 # (Pin on display/touch - SCK/T_CLK (D18 on ESP))  
+  disp_mosi: GPIO23 # (Pin on display/touch - SDI(MOSI)/T_DIN (D23 on ESP))
+  disp_miso: GPIO19 # (Pin on display/touch - SDO(MISO)/T_DO (D19 on ESP))
+  disp_dc: GPIO05 # (Pin on display - DC (D5 on esp))
+  disp_res: GPIO15 # (pin on display - RESET (D15 on ESP))
+  disp_cs: GPIO26 # (Pin on Disp - CS (D26 on ESP))
+  disp_led: GPIO04 # (Pin on Disp - LED (D4 on ESP))
+  touch_cs: GPIO17 # (Pin on Disp - T_CS (TX2 on ESP))
+  touch_clk: GPIO18 # (Pin on display/touch - SCK/T_CLK (D18 on ESP))  
+  touch_mosi: GPIO23 # (Pin on display/touch - SDI(MOSI)/T_DIN (D23 on ESP))
+  touch_miso: GPIO19 # (Pin on display/touch - SDO(MISO)/T_DO (D19 on ESP))
+  button_up: GPIO02 # Button UP/Next to change plant GPIO02 = D2 on ESP to 3.3V
+  button_down: GPIO03 # Button Down/Back to change plant GPIO03 = D3 on ESP to 3.3V
+  ####### For probe ######
+  uart_rx: GPIO32
+  uart_tx: GPIO33
+########################### END GENERAL CONFIG ####################   
+  
+########################### ESPHOME CONFIG ###########################
+esphome:
+  name: $node_name
+  comment: $device_name
+  includes:
+  libraries:
+
+##### TYPE OF ESP BOARD #####
+esp32:
+  board: $board_type
+  framework:
+    type: arduino
+
+
+##### WIFI SETUP #####
+wifi:
+  ssid: $wifi_ssid
+  password: $wifi_password
+  # Optional manual IP
+  manual_ip:
+    static_ip: $wifi_ip
+    gateway: !secret gateway
+    subnet: !secret subnet 
+
+##### LOGGER #####
+logger:
+ # level: VERY_VERBOSE  # Set the global level to VERY_VERBOSE
+ # logs:
+ #   modbus_controller: VERY_VERBOSE  # This will show detailed logs for Modbus
+ #   # You can set specific components to lower levels to avoid clutter
+ #   wifi: WARN  
+ #   api: WARN  
+ #   xpt2046: WARN
+ #   scheduler: WARN
+ #   touchscreen: WARN
+
+# Enable Home Assistant API
+api:
+##### OTA (Over the air updates) password #####
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Enable Web server.
+web_server:
+  id: web_server_std
+  port: 80
+  auth:
+    username: ${web_server_id}
+    password: ${web_server_pass}
+
+# Restart ESP
+switch:
+  - platform: restart
+    name: "${device_name} Restart"
+
+# Text sensors with general information.
+text_sensor:
+  # Expose ESPHome version as sensor.
+  - platform: version
+    name: ${device_name} ESPHome Version
+  # Expose WiFi information as sensors.
+  - platform: wifi_info
+    ip_address:
+      id: npk_probe_ip
+      name: ${device_name} IP
+    ssid:
+      id: npk_probe_ssid
+      name: ${device_name} SSID
+    bssid:
+      id: npk_probe_bssid
+      name: ${device_name} BSSID
+
+  # Add a new text sensor for displaying the current time
+  - platform: homeassistant
+    entity_id: sensor.time
+    id: current_time
+  # Add a new text sensor for displaying the current temp
+  - platform: homeassistant
+    entity_id: sensor.home_realfeel_temperature
+    id: realfeel_temperature
+
+# Define a custom font
+font:
+  - file: 'fonts/BabelSans-Bold.ttf'
+    id: icon_font_45
+    size: 15
+
+########################### END ESPHOME CONFIG ###########################
+captive_portal:
+
+spi:
+  clk_pin: $disp_clk
+  mosi_pin: $disp_mosi
+  miso_pin: $disp_miso
+
+### RS485
+uart:
+  - id: uart_1
+    rx_pin: $uart_rx
+    tx_pin: $uart_tx
+    baud_rate: 4800
+    stop_bits: 1
+
+modbus:
+  - id: modbus1
+    uart_id: uart_1
+    #flow_control_pin: 4
+
+modbus_controller:
+  - id: con_modbus_1
+    modbus_id: modbus1
+    update_interval: 11s
+    address: 0x01 
+    command_throttle: 150ms
+    setup_priority: -10
+
+
+#image:
+#  - file: $background_image 
+#    id: background
+#    type: RGB565
+#    resize: 320x240
+
+# Touch screen setup
+touchscreen:
+  platform: xpt2046
+  id: my_touchscreen
+  cs_pin: $touch_cs
+  update_interval: 50ms
+  threshold: 400
+  calibration:
+    x_min: 283
+    x_max: 3776
+    y_min: 392
+    y_max: 3870
+  transform:
+    mirror_x: false
+    mirror_y: false
+    swap_xy: false
+# +--------------------------------> 
+# | 400,400                  400,4000
+# |
+# | Display orientation and points
+# |
+# |                       BLUE AREA
+# | 4000,400                4000,4000
+
+display:
+  - platform: ili9xxx
+    model: ili9341
+    dc_pin: $disp_dc
+    reset_pin: $disp_res
+    cs_pin: $disp_cs
+    rotation: 270 
+    invert_colors: false
+    auto_clear_enabled: true
+    update_interval: 1s
+    lambda: |-
+
+      // Standard color definitions
+      auto red = Color(255, 69, 0);
+      auto green = Color(0, 255, 0);
+      auto blue = Color(0, 128, 255); // Use for under range values
+      auto white = Color(255, 255, 255);
+      auto button_color = Color(0, 128, 255);  
+      auto button_text_color = white;  // Color for button text
+
+
+      // ///////////////////////////////////////////////////////////////////////
+      // Helper function to determine color based on value and optimal range
+      auto determineColor = [&](float value, float min, float max) -> Color {
+        if (value < min) return blue; // Under the optimal range
+        else if (value > max) return red; // Over the optimal range
+        else return green; // Within the optimal range
+      };
+
+      // Display WiFi Signal Strength
+      float wifi_signal = id(npk_probe_wifi_signal).state;  // Get the WiFi signal in dB
+      if (!isnan(wifi_signal)) {
+        float wifi_percentage = (wifi_signal + 100) * 2;  // Convert dB to percentage (0% at -100 dB)
+        wifi_percentage = max(0.0f, min(100.0f, wifi_percentage)); // Clamp between 0% and 100%
+        it.printf(250, 0, id(icon_font_45), white, TextAlign::TOP_RIGHT, "WiFi: %.0f%%", wifi_percentage);
+      }
+
+
+      // Decide which plant we are dealing with
+      float temperature_min, temperature_max, moisture_min, moisture_max, ph_min, ph_max, conductivity_min, conductivity_max, nitrogen_min, nitrogen_max, phosphorus_min, phosphorus_max, potassium_min, potassium_max;
+      switch(id(plant_index)) {
+        case 0: // Tomato
+          temperature_min = id(tomato_temperature_min);
+          temperature_max = id(tomato_temperature_max);
+          moisture_min = id(tomato_moisture_min);
+          moisture_max = id(tomato_moisture_max);
+          ph_min = id(tomato_ph_min);
+          ph_max = id(tomato_ph_max);
+          conductivity_min = id(tomato_conductivity_min);
+          conductivity_max = id(tomato_conductivity_max);
+          nitrogen_min = id(tomato_nitrogen_min);
+          nitrogen_max = id(tomato_nitrogen_max);
+          phosphorus_min = id(tomato_phosphorus_min);
+          phosphorus_max = id(tomato_phosphorus_max);
+          potassium_min = id(tomato_potassium_min);
+          potassium_max = id(tomato_potassium_max);
+          break;
+        case 1: // Cucumber
+          temperature_min = id(cucumber_temperature_min);
+          temperature_max = id(cucumber_temperature_max);
+          moisture_min = id(cucumber_moisture_min);
+          moisture_max = id(cucumber_moisture_max);
+          ph_min = id(cucumber_ph_min);
+          ph_max = id(cucumber_ph_max);
+          conductivity_min = id(cucumber_conductivity_min);
+          conductivity_max = id(cucumber_conductivity_max);
+          nitrogen_min = id(cucumber_nitrogen_min);
+          nitrogen_max = id(cucumber_nitrogen_max);
+          phosphorus_min = id(cucumber_phosphorus_min);
+          phosphorus_max = id(cucumber_phosphorus_max);
+          potassium_min = id(cucumber_potassium_min);
+          potassium_max = id(cucumber_potassium_max);
+          break;
+        case 2: // Bell Pepper
+          temperature_min = id(bell_pepper_temperature_min);
+          temperature_max = id(bell_pepper_temperature_max);
+          moisture_min = id(bell_pepper_moisture_min);
+          moisture_max = id(bell_pepper_moisture_max);
+          ph_min = id(bell_pepper_ph_min);
+          ph_max = id(bell_pepper_ph_max);
+          conductivity_min = id(bell_pepper_conductivity_min);
+          conductivity_max = id(bell_pepper_conductivity_max);
+          nitrogen_min = id(bell_pepper_nitrogen_min);
+          nitrogen_max = id(bell_pepper_nitrogen_max);
+          phosphorus_min = id(bell_pepper_phosphorus_min);
+          phosphorus_max = id(bell_pepper_phosphorus_max);
+          potassium_min = id(bell_pepper_potassium_min);
+          potassium_max = id(bell_pepper_potassium_max);
+          break;
+        case 3: // Devils Ivy
+          temperature_min = id(devils_ivy_temperature_min);
+          temperature_max = id(devils_ivy_temperature_max);
+          moisture_min = id(devils_ivy_moisture_min);
+          moisture_max = id(devils_ivy_moisture_max);
+          ph_min = id(devils_ivy_ph_min);
+          ph_max = id(devils_ivy_ph_max);
+          conductivity_min = id(devils_ivy_conductivity_min);
+          conductivity_max = id(devils_ivy_conductivity_max);
+          nitrogen_min = id(devils_ivy_nitrogen_min);
+          nitrogen_max = id(devils_ivy_nitrogen_max);
+          phosphorus_min = id(devils_ivy_phosphorus_min);
+          phosphorus_max = id(devils_ivy_phosphorus_max);
+          potassium_min = id(devils_ivy_potassium_min);
+          potassium_max = id(devils_ivy_potassium_max);
+          break;
+
+        case 4: // Monstera deliciosa
+          temperature_min = id(monstera_temperature_min);
+          temperature_max = id(monstera_temperature_max);
+          moisture_min = id(monstera_moisture_min);
+          moisture_max = id(monstera_moisture_max);
+          ph_min = id(monstera_ph_min);
+          ph_max = id(monstera_ph_max);
+          conductivity_min = id(monstera_conductivity_min);
+          conductivity_max = id(monstera_conductivity_max);
+          nitrogen_min = id(monstera_nitrogen_min);
+          nitrogen_max = id(monstera_nitrogen_max);
+          phosphorus_min = id(monstera_phosphorus_min);
+          phosphorus_max = id(monstera_phosphorus_max);
+          potassium_min = id(monstera_potassium_min);
+          potassium_max = id(monstera_potassium_max);
+          break;
+          
+        case 5: // Olea europaea
+          temperature_min = id(olea_temperature_min);
+          temperature_max = id(olea_temperature_max);
+          moisture_min = id(olea_moisture_min);
+          moisture_max = id(olea_moisture_max);
+          ph_min = id(olea_ph_min);
+          ph_max = id(olea_ph_max);
+          conductivity_min = id(olea_conductivity_min);
+          conductivity_max = id(olea_conductivity_max);
+          nitrogen_min = id(olea_nitrogen_min);
+          nitrogen_max = id(olea_nitrogen_max);
+          phosphorus_min = id(olea_phosphorus_min);
+          phosphorus_max = id(olea_phosphorus_max);
+          potassium_min = id(olea_potassium_min);
+          potassium_max = id(olea_potassium_max);
+          break;
+
+        case 6: // Spathiphyllum
+          temperature_min = id(spathiphyllum_temperature_min);
+          temperature_max = id(spathiphyllum_temperature_max);
+          moisture_min = id(spathiphyllum_moisture_min);
+          moisture_max = id(spathiphyllum_moisture_max);
+          ph_min = id(spathiphyllum_ph_min);
+          ph_max = id(spathiphyllum_ph_max);
+          conductivity_min = id(spathiphyllum_conductivity_min);
+          conductivity_max = id(spathiphyllum_conductivity_max);
+          nitrogen_min = id(spathiphyllum_nitrogen_min);
+          nitrogen_max = id(spathiphyllum_nitrogen_max);
+          phosphorus_min = id(spathiphyllum_phosphorus_min);
+          phosphorus_max = id(spathiphyllum_phosphorus_max);
+          potassium_min = id(spathiphyllum_potassium_min);
+          potassium_max = id(spathiphyllum_potassium_max);
+          break;
+
+        case 7: // Drosera spatulata
+          temperature_min = id(drosera_temperature_min);
+          temperature_max = id(drosera_temperature_max);
+          moisture_min = id(drosera_moisture_min);
+          moisture_max = id(drosera_moisture_max);
+          ph_min = id(drosera_ph_min);
+          ph_max = id(drosera_ph_max);
+          conductivity_min = id(drosera_conductivity_min);
+          conductivity_max = id(drosera_conductivity_max);
+          nitrogen_min = id(drosera_nitrogen_min);
+          nitrogen_max = id(drosera_nitrogen_max);
+          phosphorus_min = id(drosera_phosphorus_min);
+          phosphorus_max = id(drosera_phosphorus_max);
+          potassium_min = id(drosera_potassium_min);
+          potassium_max = id(drosera_potassium_max);
+          break;
+
+        case 8: // Raspberry (Malina)
+          temperature_min = id(raspberry_temperature_min);
+          temperature_max = id(raspberry_temperature_max);
+          moisture_min = id(raspberry_moisture_min);
+          moisture_max = id(raspberry_moisture_max);
+          ph_min = id(raspberry_ph_min);
+          ph_max = id(raspberry_ph_max);
+          conductivity_min = id(raspberry_conductivity_min);
+          conductivity_max = id(raspberry_conductivity_max);
+          nitrogen_min = id(raspberry_nitrogen_min);
+          nitrogen_max = id(raspberry_nitrogen_max);
+          phosphorus_min = id(raspberry_phosphorus_min);
+          phosphorus_max = id(raspberry_phosphorus_max);
+          potassium_min = id(raspberry_potassium_min);
+          potassium_max = id(raspberry_potassium_max);
+          break;
+
+        case 9: // Strawberry (Jahoda)
+          temperature_min = id(strawberry_temperature_min);
+          temperature_max = id(strawberry_temperature_max);
+          moisture_min = id(strawberry_moisture_min);
+          moisture_max = id(strawberry_moisture_max);
+          ph_min = id(strawberry_ph_min);
+          ph_max = id(strawberry_ph_max);
+          conductivity_min = id(strawberry_conductivity_min);
+          conductivity_max = id(strawberry_conductivity_max);
+          nitrogen_min = id(strawberry_nitrogen_min);
+          nitrogen_max = id(strawberry_nitrogen_max);
+          phosphorus_min = id(strawberry_phosphorus_min);
+          phosphorus_max = id(strawberry_phosphorus_max);
+          potassium_min = id(strawberry_potassium_min);
+          potassium_max = id(strawberry_potassium_max);
+          break;
+
+        case 10: // Lovage (Ligurček)
+          temperature_min = id(lovage_temperature_min);
+          temperature_max = id(lovage_temperature_max);
+          moisture_min = id(lovage_moisture_min);
+          moisture_max = id(lovage_moisture_max);
+          ph_min = id(lovage_ph_min);
+          ph_max = id(lovage_ph_max);
+          conductivity_min = id(lovage_conductivity_min);
+          conductivity_max = id(lovage_conductivity_max);
+          nitrogen_min = id(lovage_nitrogen_min);
+          nitrogen_max = id(lovage_nitrogen_max);
+          phosphorus_min = id(lovage_phosphorus_min);
+          phosphorus_max = id(lovage_phosphorus_max);
+          potassium_min = id(lovage_potassium_min);
+          potassium_max = id(lovage_potassium_max);
+          break;
+
+        case 11: // Mint (Mäta)
+          temperature_min = id(mint_temperature_min);
+          temperature_max = id(mint_temperature_max);
+          moisture_min = id(mint_moisture_min);
+          moisture_max = id(mint_moisture_max);
+          ph_min = id(mint_ph_min);
+          ph_max = id(mint_ph_max);
+          conductivity_min = id(mint_conductivity_min);
+          conductivity_max = id(mint_conductivity_max);
+          nitrogen_min = id(mint_nitrogen_min);
+          nitrogen_max = id(mint_nitrogen_max);
+          phosphorus_min = id(mint_phosphorus_min);
+          phosphorus_max = id(mint_phosphorus_max);
+          potassium_min = id(mint_potassium_min);
+          potassium_max = id(mint_potassium_max);
+          break;
+
+        case 12: // Snake Plant (Svokrin jazyk)
+          temperature_min = id(snake_plant_temperature_min);
+          temperature_max = id(snake_plant_temperature_max);
+          moisture_min = id(snake_plant_moisture_min);
+          moisture_max = id(snake_plant_moisture_max);
+          ph_min = id(snake_plant_ph_min);
+          ph_max = id(snake_plant_ph_max);
+          conductivity_min = id(snake_plant_conductivity_min);
+          conductivity_max = id(snake_plant_conductivity_max);
+          nitrogen_min = id(snake_plant_nitrogen_min);
+          nitrogen_max = id(snake_plant_nitrogen_max);
+          phosphorus_min = id(snake_plant_phosphorus_min);
+          phosphorus_max = id(snake_plant_phosphorus_max);
+          potassium_min = id(snake_plant_potassium_min);
+          potassium_max = id(snake_plant_potassium_max);
+          break;
+
+      }
+      
+      // Moisture
+      float moisture_value = id(soil_moisture).state;
+      auto moisture_color = determineColor(moisture_value, moisture_min, moisture_max);
+      int ideal_moisture_value = (int)((moisture_min + moisture_max) / 2.0);
+      it.printf(0, 30, id(icon_font_45), moisture_color, TextAlign::TOP_LEFT, "Moisture: %d%% (Ideal: %d%%)", (int)moisture_value, ideal_moisture_value);
+
+      // pH
+      float ph_value = id(soil_ph).state;
+      auto ph_color = determineColor(ph_value, ph_min, ph_max);
+      float ideal_ph_value = (ph_min + ph_max) / 2.0;
+      it.printf(0, 60, id(icon_font_45), ph_color, TextAlign::TOP_LEFT, "pH: %.1f (Ideal: %.1f)", ph_value, ideal_ph_value);  // Keeping decimal for pH
+
+      // Conductivity
+      float conductivity_value = id(soil_conductivity).state;
+      auto conductivity_color = determineColor(conductivity_value, conductivity_min, conductivity_max);
+      int ideal_conductivity_value = (int)((conductivity_min + conductivity_max) / 2.0);
+      it.printf(0, 90, id(icon_font_45), conductivity_color, TextAlign::TOP_LEFT, "Conductivity: %d us/cm (Ideal: %d us/cm)", (int)conductivity_value, ideal_conductivity_value);
+
+      // Nitrogen
+      float nitrogen_value = id(soil_nitrogen).state;
+      auto nitrogen_color = determineColor(nitrogen_value, nitrogen_min, nitrogen_max);
+      int ideal_nitrogen_value = (int)((nitrogen_min + nitrogen_max) / 2.0);
+      it.printf(0, 120, id(icon_font_45), nitrogen_color, TextAlign::TOP_LEFT, "N Nitrogen: %d mg/L (Ideal: %d mg/L)", (int)nitrogen_value, ideal_nitrogen_value);
+
+      // Phosphorus
+      float phosphorus_value = id(soil_phosphorus).state;
+      auto phosphorus_color = determineColor(phosphorus_value, phosphorus_min, phosphorus_max);
+      int ideal_phosphorus_value = (int)((phosphorus_min + phosphorus_max) / 2.0);
+      it.printf(0, 150, id(icon_font_45), phosphorus_color, TextAlign::TOP_LEFT, "P Phosphorus: %d mg/L (Ideal: %d mg/L)", (int)phosphorus_value, ideal_phosphorus_value);
+
+      // Potassium
+      float potassium_value = id(soil_potassium).state;
+      auto potassium_color = determineColor(potassium_value, potassium_min, potassium_max);
+      int ideal_potassium_value = (int)((potassium_min + potassium_max) / 2.0);
+      it.printf(0, 180, id(icon_font_45), potassium_color, TextAlign::TOP_LEFT, "K Potassium: %d mg/L (Ideal: %d mg/L)", (int)potassium_value, ideal_potassium_value);
+
+      // Temperature
+      float temperature_value = id(soil_temp).state;
+      auto temperature_color = determineColor(temperature_value, temperature_min, temperature_max);
+      int ideal_temperature_value = (int)((temperature_min + temperature_max) / 2.0);
+      it.printf(0, 210, id(icon_font_45), temperature_color, TextAlign::TOP_LEFT, "Temperature: %d°C (Ideal: %d°C)", (int)temperature_value, ideal_temperature_value);
+
+      // Check if the sensor data was updated
+      if (id(sensor_data_updated)) {
+        // Draw a small green circle (as an indicator) in the top-right corner of the display
+        it.filled_circle(300, 10, 5, Color(0, 255, 0)); // Green circle indicator
+        
+        // Reset the sensor_data_updated flag after displaying the indicator
+        id(sensor_data_updated) = false;
+      }
+
+
+
+
+      // Define button areas
+      constexpr int rightButtonXMin = 10; 
+      constexpr int rightButtonXMax = 420; // Right edge of the display
+      constexpr int buttonYMin = 10; // Starting Y of buttons
+      constexpr int buttonYMax = 340; // Bottom of the display
+      
+      // Draw buttons for visual feedback (optional)
+      //it.filled_rectangle(rightButtonXMin, buttonYMin, rightButtonXMax - rightButtonXMin, buttonYMax - buttonYMin, Color(0, 0, 255)); // Right button
+
+      // Handling touch input with debug logging
+      auto touch = id(my_touchscreen)->get_touch();
+      if (touch) {
+        ESP_LOGD("Touch", "Touch Detected: x=%d, y=%d", touch->x, touch->y);
+
+        // Debug: Print touch coordinates to the log
+        // Right button logic
+         if (touch->x >= rightButtonXMin && touch->x <= rightButtonXMax && touch->y >= buttonYMin && touch->y <= buttonYMax) {
+          id(plant_index) = (id(plant_index) + 1) % 13; // Cycle through plants
+          ESP_LOGD("Touch", "Button Pressed: Plant index changed to %d", id(plant_index));
+        }
+
+        // Display the selected plant name
+        std::string plant_name;
+        switch(id(plant_index)) {
+          case 0: plant_name = "1. Tomato (Paradajka)"; break;
+          case 1: plant_name = "2. Cucumber (Uhorka)"; break;
+          case 2: plant_name = "3. Bell Pepper (Paprika)"; break;
+          case 3: plant_name = "4. Devils Ivy"; break;
+          case 4: plant_name = "5. Monstera deliciosa"; break;
+          case 5: plant_name = "6. Olea Europaea (Oliva)"; break;
+          case 6: plant_name = "7. Spathiphyllum (Lopatkovec)"; break;
+          case 7: plant_name = "8. Drosera spatulata (Masozravka)"; break;
+          case 8: plant_name = "9. Raspberry (Malina)"; break;
+          case 9: plant_name = "10. Strawberry (Jahoda)"; break;
+          case 10: plant_name = "11. Lovage (Ligurcek)"; break;
+          case 11: plant_name = "12. Mint (Mata)"; break;
+          case 12: plant_name = "13. Snake Plant (Svokrin jazyk)"; break;
+
+        }
+        it.print(100, 0, id(icon_font_45), Color::WHITE, TextAlign::TOP_CENTER, plant_name.c_str());
+        
+        // Display the IP address below the plant name
+        it.printf(260, 30, id(icon_font_45), white, TextAlign::TOP_CENTER, "IP: %s", id(npk_probe_ip).state.c_str());
+
+        // Display the MAC address below the IP address
+        it.printf(240, 60, id(icon_font_45), white, TextAlign::TOP_CENTER, "MAC: %s", id(npk_probe_bssid).state.c_str());
+
+        // Add text to the button ("NEXT")
+        it.print(260, 215, id(icon_font_45), button_text_color, TextAlign::TOP_CENTER, "NEXT"); 
+
+      }
+
+
+      
+
+
+      // ///////////////////////////////////////////////////////////////////////
+
+
+
+      // ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      // Display sensor readings
+      //it.printf(0, 0, id(icon_font_45), white, TextAlign::TOP_LEFT, "Temperature: %.1f °C", id(soil_temp).state);
+      //it.printf(0, 30, id(icon_font_45), white, TextAlign::TOP_LEFT, "Moisture: %.1f%%", id(soil_moisture).state);
+      //it.printf(0, 60, id(icon_font_45), white, TextAlign::TOP_LEFT, "Conductivity: %.2f us/cm", id(soil_conductivity).state);
+      //it.printf(0, 90, id(icon_font_45), white, TextAlign::TOP_LEFT, "pH: %.1f", id(soil_ph).state);
+      //it.printf(0, 120, id(icon_font_45), white, TextAlign::TOP_LEFT,  "N Nitrogen: %.2f mg/kg", id(soil_nitrogen).state);
+      //it.printf(0, 150, id(icon_font_45), white, TextAlign::TOP_LEFT, "P Phosphor: %.2f mg/kg", id(soil_phosphorus).state);
+      //it.printf(0, 180, id(icon_font_45), white, TextAlign::TOP_LEFT, "K Potasium: %.2f mg/kg", id(soil_potassium).state);
+      // ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+binary_sensor:
+  # Show the status of ESP32
+  - platform: status
+    name: Status $device_name
+
+  # Button Next with pull-up resistor and debounce
+  - platform: gpio
+    pin:
+      number: GPIO02
+      mode: INPUT_PULLDOWN    # Enable internal pull-down resistor
+    name: "Next Plant Button"
+    id: button_next
+    filters:
+      - delayed_on: 150ms  # Debounce delay to prevent multiple presses
+      - delayed_off: 150ms
+    on_press:
+      then:
+        - lambda: |-
+            id(plant_index) = (id(plant_index) + 1) % 13;  // Cycle through plants (wrap around)
+
+  # Button Previous with pull-up resistor and debounce
+  - platform: gpio
+    pin:
+      number: GPIO21
+      mode: INPUT_PULLDOWN    # Enable internal pull-down resistor
+    name: "Previous Plant Button"
+    id: button_previous
+    filters:
+      - delayed_on: 150ms  # Debounce delay to prevent multiple presses
+      - delayed_off: 150ms
+    on_press:
+      then:
+        - lambda: |-
+            id(plant_index) = (id(plant_index) - 1 + 13) % 13;  // Cycle through plants (wrap around in reverse)
+
+
+# Define a PWM output on the ESP32
+output:
+  - platform: ledc
+    pin: $disp_led
+    id: backlight_output
+
+
+light:
+  - platform: monochromatic
+    name: "PWM Controlled Light"
+    id: my_light
+    output: backlight_output  # Use the previously defined pwm_output entity
+    restore_mode: ALWAYS_ON  # Start with the light on
+
+
+sensor:
+  # Uptime sensor.
+  - platform: uptime
+    name: ${device_name} Uptime
+  
+  # WiFi Signal sensor.
+  - platform: wifi_signal
+    name: ${device_name} WiFi Signal
+    id: npk_probe_wifi_signal  
+    update_interval: 15s
+
+
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_moisture
+    name: "Soil Humidity"
+    address: 0
+    unit_of_measurement: "RH"
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 1
+    filters:
+      - lambda: |-
+          float raw_value = x; // Raw sensor value
+          float correction_factor = 2.44; // Correction factor based on observed values
+          float adjusted_value = (raw_value * correction_factor) / 10;
+          return adjusted_value;  // Return without clamping to observe behavior
+    on_value:
+      then:
+        - lambda: |-
+            id(sensor_data_updated) = true;
+
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_temp
+    name: "Soil Temperature"
+    address: 1
+    unit_of_measurement: "°C"
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_conductivity
+    name: "Soil Conductivity"
+    address: 2
+    unit_of_measurement: "us/cm"
+    register_type: holding
+    value_type: U_WORD
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_ph
+    name: "Soil pH"
+    address: 3
+    unit_of_measurement: "pH"
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+    lambda: |-
+      float value = (x * 0.1) + 0.0;  // Apply the offset
+      return (value < 0) ? 0 : value; // Ensure value doesn't go below 0
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_nitrogen
+    name: "Soil Nitrogen"
+    address: 4 
+    unit_of_measurement: "mg/Kg"
+    register_type: holding
+    value_type: U_WORD
+    lambda: |-
+      float value = x - 27;  // Apply the offset
+      return (value < 0) ? 0 : value; // Ensure value doesn't go below 0
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_phosphorus
+    name: "Soil Phosphorus"
+    address: 5 
+    unit_of_measurement: "mg/Kg"
+    register_type: holding
+    value_type: U_WORD
+    lambda: |-
+      float value = x - 109;  // Apply the offset
+      return (value < 0) ? 0 : value; // Ensure value doesn't go below 0
+
+  - platform: modbus_controller
+    modbus_controller_id: con_modbus_1
+    id: soil_potassium
+    name: "Soil Potassium"
+    address: 6 
+    unit_of_measurement: "mg/Kg"
+    register_type: holding
+    value_type: U_WORD
+    lambda: |-
+      float value = x - 102;  // Apply the offset
+      return (value < 0) ? 0 : value; // Ensure value doesn't go below 0
+
+############## Calibration reading ##############################
+# Uncomment if you want to read calibration offsets from sensor #
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_temp_calibration
+    # name: "Soil Temperature Calibration"
+    # address: 81  # Register 40081
+    # unit_of_measurement: "°C"
+    # register_type: holding
+    # value_type: U_WORD
+    # filters:
+      # - multiply: 0.1
+    # accuracy_decimals: 1
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading temperature calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_humidity_calibration
+    # name: "Soil Humidity Calibration"
+    # address: 82  # Register 40082
+    # unit_of_measurement: "%"
+    # register_type: holding
+    # value_type: U_WORD
+    # filters:
+      # - multiply: 0.1
+    # accuracy_decimals: 1
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading humidity calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_conductivity_calibration
+    # name: "Soil Conductivity Calibration"
+    # address: 83  # Register 40083
+    # unit_of_measurement: "uS/cm"
+    # register_type: holding
+    # value_type: U_WORD
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading conductivity calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_ph_calibration
+    # name: "Soil pH Calibration"
+    # address: 84  # Register 40084
+    # unit_of_measurement: "pH"
+    # register_type: holding
+    # value_type: U_WORD
+    # filters:
+      # - multiply: 0.1
+    # accuracy_decimals: 1
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading pH calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_nitrogen_calibration
+    # name: "Soil Nitrogen Calibration"
+    # address: 41259  # Register 41259
+    # unit_of_measurement: "mg/Kg"
+    # register_type: holding
+    # value_type: U_WORD
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading nitrogen calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_phosphorus_calibration
+    # name: "Soil Phosphorus Calibration"
+    # address: 41269  # Register 41269
+    # unit_of_measurement: "mg/Kg"
+    # register_type: holding
+    # value_type: U_WORD
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading phosphorus calibration value: %.1f", x);
+      # return x;
+
+  # - platform: modbus_controller
+    # modbus_controller_id: con_modbus_1
+    # id: soil_potassium_calibration
+    # name: "Soil Potassium Calibration"
+    # address: 41279  # Register 41279
+    # unit_of_measurement: "mg/Kg"
+    # register_type: holding
+    # value_type: U_WORD
+    # lambda: |-
+      # ESP_LOGI("custom", "Reading potassium calibration value: %.1f", x);
+      # return x;
+
+############################################
+globals:
+  # Plant Index
+  - id: plant_index
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Screen backlight
+  - id: screen_timeout
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # To indicate data load from sensor
+  - id: sensor_data_updated
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # To calibrate parameters
+  - id: temp_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: humidity_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: conductivity_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: ph_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: nitrogen_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: phosphorus_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: potassium_calibration
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  # Tomato optimal ranges
+  - id: tomato_temperature_min
+    type: float
+    initial_value: '18.0' 
+  - id: tomato_temperature_max
+    type: float
+    initial_value: '26.0' 
+  - id: tomato_moisture_min
+    type: float
+    initial_value: '40.0'
+  - id: tomato_moisture_max
+    type: float
+    initial_value: '70.0'
+  - id: tomato_ph_min
+    type: float
+    initial_value: '5.5' 
+  - id: tomato_ph_max
+    type: float
+    initial_value: '6.8' 
+  - id: tomato_conductivity_min
+    type: float
+    initial_value: '2000.0'  # µS/cm
+  - id: tomato_conductivity_max
+    type: float
+    initial_value: '4000.0'  # µS/cm
+  - id: tomato_nitrogen_min
+    type: float
+    initial_value: '200.0' 
+  - id: tomato_nitrogen_max
+    type: float
+    initial_value: '400.0' 
+  - id: tomato_phosphorus_min
+    type: float
+    initial_value: '30.0' 
+  - id: tomato_phosphorus_max
+    type: float
+    initial_value: '60.0' 
+  - id: tomato_potassium_min
+    type: float
+    initial_value: '300.0' 
+  - id: tomato_potassium_max
+    type: float
+    initial_value: '500.0' 
+
+  # Cucumber optimal ranges
+  - id: cucumber_temperature_min
+    type: float
+    initial_value: '20.0' 
+  - id: cucumber_temperature_max
+    type: float
+    initial_value: '24.0' 
+  - id: cucumber_moisture_min
+    type: float
+    initial_value: '60.0' 
+  - id: cucumber_moisture_max
+    type: float
+    initial_value: '80.0' 
+  - id: cucumber_ph_min
+    type: float
+    initial_value: '5.5' 
+  - id: cucumber_ph_max
+    type: float
+    initial_value: '6.5' 
+  - id: cucumber_conductivity_min
+    type: float
+    initial_value: '1500.0'  # µS/cm
+  - id: cucumber_conductivity_max
+    type: float
+    initial_value: '2500.0'  # µS/cm
+  - id: cucumber_nitrogen_min
+    type: float
+    initial_value: '150.0' 
+  - id: cucumber_nitrogen_max
+    type: float
+    initial_value: '300.0' 
+  - id: cucumber_phosphorus_min
+    type: float
+    initial_value: '30.0' 
+  - id: cucumber_phosphorus_max
+    type: float
+    initial_value: '60.0' 
+  - id: cucumber_potassium_min
+    type: float
+    initial_value: '200.0' 
+  - id: cucumber_potassium_max
+    type: float
+    initial_value: '400.0' 
+
+  # Bell Pepper optimal ranges
+  - id: bell_pepper_temperature_min
+    type: float
+    initial_value: '18.0' 
+  - id: bell_pepper_temperature_max
+    type: float
+    initial_value: '25.0' 
+  - id: bell_pepper_moisture_min
+    type: float
+    initial_value: '70.0' 
+  - id: bell_pepper_moisture_max
+    type: float
+    initial_value: '80.0' 
+  - id: bell_pepper_ph_min
+    type: float
+    initial_value: '6.0' 
+  - id: bell_pepper_ph_max
+    type: float
+    initial_value: '6.5' 
+  - id: bell_pepper_conductivity_min
+    type: float
+    initial_value: '2000.0'  # µS/cm
+  - id: bell_pepper_conductivity_max
+    type: float
+    initial_value: '3500.0'  # µS/cm
+  - id: bell_pepper_nitrogen_min
+    type: float
+    initial_value: '200.0' 
+  - id: bell_pepper_nitrogen_max
+    type: float
+    initial_value: '400.0' 
+  - id: bell_pepper_phosphorus_min
+    type: float
+    initial_value: '30.0' 
+  - id: bell_pepper_phosphorus_max
+    type: float
+    initial_value: '60.0' 
+  - id: bell_pepper_potassium_min
+    type: float
+    initial_value: '300.0' 
+  - id: bell_pepper_potassium_max
+    type: float
+    initial_value: '500.0' 
+
+  # Devil's Ivy optimal ranges
+  - id: devils_ivy_temperature_min
+    type: float
+    initial_value: '18.0' 
+  - id: devils_ivy_temperature_max
+    type: float
+    initial_value: '24.0' 
+  - id: devils_ivy_moisture_min
+    type: float
+    initial_value: '40.0' 
+  - id: devils_ivy_moisture_max
+    type: float
+    initial_value: '60.0' 
+  - id: devils_ivy_ph_min
+    type: float
+    initial_value: '6.0' 
+  - id: devils_ivy_ph_max
+    type: float
+    initial_value: '7.0' 
+  - id: devils_ivy_conductivity_min
+    type: float
+    initial_value: '1000.0'  # µS/cm
+  - id: devils_ivy_conductivity_max
+    type: float
+    initial_value: '2000.0'  # µS/cm
+  - id: devils_ivy_nitrogen_min
+    type: float
+    initial_value: '100.0' 
+  - id: devils_ivy_nitrogen_max
+    type: float
+    initial_value: '200.0' 
+  - id: devils_ivy_phosphorus_min
+    type: float
+    initial_value: '20.0' 
+  - id: devils_ivy_phosphorus_max
+    type: float
+    initial_value: '50.0' 
+  - id: devils_ivy_potassium_min
+    type: float
+    initial_value: '150.0' 
+  - id: devils_ivy_potassium_max
+    type: float
+    initial_value: '300.0' 
+
+  # Monstera Deliciosa optimal ranges
+  - id: monstera_temperature_min
+    type: float
+    initial_value: '18.0'  
+  - id: monstera_temperature_max
+    type: float
+    initial_value: '30.0'  
+  - id: monstera_moisture_min
+    type: float
+    initial_value: '40.0'  
+  - id: monstera_moisture_max
+    type: float
+    initial_value: '70.0'  
+  - id: monstera_ph_min
+    type: float
+    initial_value: '5.5'   
+  - id: monstera_ph_max
+    type: float
+    initial_value: '7.0'   
+  - id: monstera_conductivity_min
+    type: float
+    initial_value: '1000.0'  # µS/cm
+  - id: monstera_conductivity_max
+    type: float
+    initial_value: '2000.0'  # µS/cm
+  - id: monstera_nitrogen_min
+    type: float
+    initial_value: '150.0' 
+  - id: monstera_nitrogen_max
+    type: float
+    initial_value: '300.0' 
+  - id: monstera_phosphorus_min
+    type: float
+    initial_value: '30.0'  
+  - id: monstera_phosphorus_max
+    type: float
+    initial_value: '60.0'  
+  - id: monstera_potassium_min
+    type: float
+    initial_value: '200.0' 
+  - id: monstera_potassium_max
+    type: float
+    initial_value: '400.0' 
+
+  # Olea Europaea optimal ranges
+  - id: olea_temperature_min
+    type: float
+    initial_value: '10.0'  
+  - id: olea_temperature_max
+    type: float
+    initial_value: '35.0'  
+  - id: olea_moisture_min
+    type: float
+    initial_value: '30.0'  
+  - id: olea_moisture_max
+    type: float
+    initial_value: '60.0'  
+  - id: olea_ph_min
+    type: float
+    initial_value: '6.0'   
+  - id: olea_ph_max
+    type: float
+    initial_value: '8.5'   
+  - id: olea_conductivity_min
+    type: float
+    initial_value: '1000.0'  # µS/cm
+  - id: olea_conductivity_max
+    type: float
+    initial_value: '3000.0'  # µS/cm 
+  - id: olea_nitrogen_min
+    type: float
+    initial_value: '100.0' 
+  - id: olea_nitrogen_max
+    type: float
+    initial_value: '250.0' 
+  - id: olea_phosphorus_min
+    type: float
+    initial_value: '20.0'  
+  - id: olea_phosphorus_max
+    type: float
+    initial_value: '50.0'  
+  - id: olea_potassium_min
+    type: float
+    initial_value: '150.0' 
+  - id: olea_potassium_max
+    type: float
+    initial_value: '300.0' 
+
+  # Spathiphyllum optimal ranges
+  - id: spathiphyllum_temperature_min
+    type: float
+    initial_value: '16.0'  
+  - id: spathiphyllum_temperature_max
+    type: float
+    initial_value: '30.0'  
+  - id: spathiphyllum_moisture_min
+    type: float
+    initial_value: '40.0'  
+  - id: spathiphyllum_moisture_max
+    type: float
+    initial_value: '80.0'  
+  - id: spathiphyllum_ph_min
+    type: float
+    initial_value: '5.5'   
+  - id: spathiphyllum_ph_max
+    type: float
+    initial_value: '6.5'   
+  - id: spathiphyllum_conductivity_min
+    type: float
+    initial_value: '1500.0'  # µS/cm
+  - id: spathiphyllum_conductivity_max
+    type: float
+    initial_value: '2500.0'  # µS/cm
+  - id: spathiphyllum_nitrogen_min
+    type: float
+    initial_value: '100.0' 
+  - id: spathiphyllum_nitrogen_max
+    type: float
+    initial_value: '250.0' 
+  - id: spathiphyllum_phosphorus_min
+    type: float
+    initial_value: '30.0'  
+  - id: spathiphyllum_phosphorus_max
+    type: float
+    initial_value: '60.0'  
+  - id: spathiphyllum_potassium_min
+    type: float
+    initial_value: '150.0' 
+  - id: spathiphyllum_potassium_max
+    type: float
+    initial_value: '300.0' 
+
+  # Drosera spatulata optimal ranges
+  - id: drosera_temperature_min
+    type: float
+    initial_value: '10.0'  
+  - id: drosera_temperature_max
+    type: float
+    initial_value: '30.0'  
+  - id: drosera_moisture_min
+    type: float
+    initial_value: '50.0'  
+  - id: drosera_moisture_max
+    type: float
+    initial_value: '100.0' 
+  - id: drosera_ph_min
+    type: float
+    initial_value: '4.0'   
+  - id: drosera_ph_max
+    type: float
+    initial_value: '6.0'   
+  - id: drosera_conductivity_min
+    type: float
+    initial_value: '900'   
+  - id: drosera_conductivity_max
+    type: float
+    initial_value: '2000'   
+  - id: drosera_nitrogen_min
+    type: float
+    initial_value: '10.0'  
+  - id: drosera_nitrogen_max
+    type: float
+    initial_value: '50.0'  
+  - id: drosera_phosphorus_min
+    type: float
+    initial_value: '5.0'   
+  - id: drosera_phosphorus_max
+    type: float
+    initial_value: '20.0'  
+  - id: drosera_potassium_min
+    type: float
+    initial_value: '10.0'  
+  - id: drosera_potassium_max
+    type: float
+    initial_value: '50.0'  
+
+  # Raspberry (Malina) optimal ranges
+  - id: raspberry_temperature_min
+    type: float
+    initial_value: '18.0'  
+  - id: raspberry_temperature_max
+    type: float
+    initial_value: '24.0'  
+  - id: raspberry_moisture_min
+    type: float
+    initial_value: '40.0'  
+  - id: raspberry_moisture_max
+    type: float
+    initial_value: '60.0'  
+  - id: raspberry_ph_min
+    type: float
+    initial_value: '5.5'   
+  - id: raspberry_ph_max
+    type: float
+    initial_value: '6.5'   
+  - id: raspberry_conductivity_min
+    type: float
+    initial_value: '1500.0'   
+  - id: raspberry_conductivity_max
+    type: float
+    initial_value: '2500.0'   
+  - id: raspberry_nitrogen_min
+    type: float
+    initial_value: '100.0' 
+  - id: raspberry_nitrogen_max
+    type: float
+    initial_value: '200.0' 
+  - id: raspberry_phosphorus_min
+    type: float
+    initial_value: '30.0'  
+  - id: raspberry_phosphorus_max
+    type: float
+    initial_value: '60.0'  
+  - id: raspberry_potassium_min
+    type: float
+    initial_value: '200.0' 
+  - id: raspberry_potassium_max
+    type: float
+    initial_value: '400.0' 
+
+  # Strawberry (Jahoda) optimal ranges
+  - id: strawberry_temperature_min
+    type: float
+    initial_value: '18.0'  # °C minimum
+  - id: strawberry_temperature_max
+    type: float
+    initial_value: '24.0'  # °C maximum
+  - id: strawberry_moisture_min
+    type: float
+    initial_value: '60.0'  # Optimal soil moisture range
+  - id: strawberry_moisture_max
+    type: float
+    initial_value: '80.0'  # Optimal soil moisture range
+  - id: strawberry_ph_min
+    type: float
+    initial_value: '5.5'   # pH range
+  - id: strawberry_ph_max
+    type: float
+    initial_value: '6.5'   # pH range
+  - id: strawberry_conductivity_min
+    type: float
+    initial_value: '1000.0'  # Conductivity (µs/cm)
+  - id: strawberry_conductivity_max
+    type: float
+    initial_value: '1500.0'  # Conductivity (µs/cm)
+  - id: strawberry_nitrogen_min
+    type: float
+    initial_value: '100.0' # Nitrogen (mg/L)
+  - id: strawberry_nitrogen_max
+    type: float
+    initial_value: '200.0' # Nitrogen (mg/L)
+  - id: strawberry_phosphorus_min
+    type: float
+    initial_value: '30.0'  # Phosphorus (mg/L)
+  - id: strawberry_phosphorus_max
+    type: float
+    initial_value: '60.0'  # Phosphorus (mg/L)
+  - id: strawberry_potassium_min
+    type: float
+    initial_value: '150.0' # Potassium (mg/L)
+  - id: strawberry_potassium_max
+    type: float
+    initial_value: '300.0' # Potassium (mg/L)
+
+  # Lovage (Ligurček) optimal ranges
+  - id: lovage_temperature_min
+    type: float
+    initial_value: '16.0'  # °C minimum
+  - id: lovage_temperature_max
+    type: float
+    initial_value: '24.0'  # °C maximum
+  - id: lovage_moisture_min
+    type: float
+    initial_value: '40.0'  # Optimal soil moisture range
+  - id: lovage_moisture_max
+    type: float
+    initial_value: '70.0'  # Optimal soil moisture range
+  - id: lovage_ph_min
+    type: float
+    initial_value: '6.0'   # pH range
+  - id: lovage_ph_max
+    type: float
+    initial_value: '7.5'   # pH range
+  - id: lovage_conductivity_min
+    type: float
+    initial_value: '800.0'   # Conductivity (µs/cm)
+  - id: lovage_conductivity_max
+    type: float
+    initial_value: '1200.0'  # Conductivity (µs/cm)
+  - id: lovage_nitrogen_min
+    type: float
+    initial_value: '80.0'   # Nitrogen (mg/L)
+  - id: lovage_nitrogen_max
+    type: float
+    initial_value: '150.0'  # Nitrogen (mg/L)
+  - id: lovage_phosphorus_min
+    type: float
+    initial_value: '20.0'   # Phosphorus (mg/L)
+  - id: lovage_phosphorus_max
+    type: float
+    initial_value: '50.0'   # Phosphorus (mg/L)
+  - id: lovage_potassium_min
+    type: float
+    initial_value: '200.0'  # Potassium (mg/L)
+  - id: lovage_potassium_max
+    type: float
+    initial_value: '400.0'  # Potassium (mg/L)
+
+  # Mint (Mäta) optimal ranges
+  - id: mint_temperature_min
+    type: float
+    initial_value: '18.0'  # °C minimum
+  - id: mint_temperature_max
+    type: float
+    initial_value: '24.0'  # °C maximum
+  - id: mint_moisture_min
+    type: float
+    initial_value: '60.0'  # Optimal soil moisture range
+  - id: mint_moisture_max
+    type: float
+    initial_value: '80.0'  # Optimal soil moisture range
+  - id: mint_ph_min
+    type: float
+    initial_value: '6.0'   # pH range
+  - id: mint_ph_max
+    type: float
+    initial_value: '7.0'   # pH range
+  - id: mint_conductivity_min
+    type: float
+    initial_value: '1000.0'   # Conductivity (µs/cm)
+  - id: mint_conductivity_max
+    type: float
+    initial_value: '1500.0'   # Conductivity (µs/cm)
+  - id: mint_nitrogen_min
+    type: float
+    initial_value: '150.0' # Nitrogen (mg/L)
+  - id: mint_nitrogen_max
+    type: float
+    initial_value: '250.0' # Nitrogen (mg/L)
+  - id: mint_phosphorus_min
+    type: float
+    initial_value: '30.0'  # Phosphorus (mg/L)
+  - id: mint_phosphorus_max
+    type: float
+    initial_value: '60.0'  # Phosphorus (mg/L)
+  - id: mint_potassium_min
+    type: float
+    initial_value: '150.0' # Potassium (mg/L)
+  - id: mint_potassium_max
+    type: float
+    initial_value: '300.0' # Potassium (mg/L)
+
+  # Snake Plant (Svokrin jazyk) optimal ranges
+  - id: snake_plant_temperature_min
+    type: float
+    initial_value: '16.0'  # °C minimum
+  - id: snake_plant_temperature_max
+    type: float
+    initial_value: '30.0'  # °C maximum
+  - id: snake_plant_moisture_min
+    type: float
+    initial_value: '20.0'  # Optimal soil moisture range
+  - id: snake_plant_moisture_max
+    type: float
+    initial_value: '40.0'  # Optimal soil moisture range
+  - id: snake_plant_ph_min
+    type: float
+    initial_value: '6.0'   # pH range
+  - id: snake_plant_ph_max
+    type: float
+    initial_value: '7.5'   # pH range
+  - id: snake_plant_conductivity_min
+    type: float
+    initial_value: '500.0'   # Conductivity (µs/cm)
+  - id: snake_plant_conductivity_max
+    type: float
+    initial_value: '1000.0'  # Conductivity (µs/cm)
+  - id: snake_plant_nitrogen_min
+    type: float
+    initial_value: '50.0'    # Nitrogen (mg/L)
+  - id: snake_plant_nitrogen_max
+    type: float
+    initial_value: '150.0'   # Nitrogen (mg/L)
+  - id: snake_plant_phosphorus_min
+    type: float
+    initial_value: '20.0'    # Phosphorus (mg/L)
+  - id: snake_plant_phosphorus_max
+    type: float
+    initial_value: '50.0'    # Phosphorus (mg/L)
+  - id: snake_plant_potassium_min
+    type: float
+    initial_value: '100.0'   # Potassium (mg/L)
+  - id: snake_plant_potassium_max
+    type: float
+    initial_value: '200.0'   # Potassium (mg/L)
+
+```
