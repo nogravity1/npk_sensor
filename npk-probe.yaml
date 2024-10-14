@@ -106,15 +106,6 @@ text_sensor:
       id: npk_probe_bssid
       name: ${device_name} BSSID
 
-  # Add a new text sensor for displaying the current time
-  - platform: homeassistant
-    entity_id: sensor.time
-    id: current_time
-  # Add a new text sensor for displaying the current temp
-  - platform: homeassistant
-    entity_id: sensor.home_realfeel_temperature
-    id: realfeel_temperature
-
 # Define a custom font
 font:
   - file: 'fonts/BabelSans-Bold.ttf'
